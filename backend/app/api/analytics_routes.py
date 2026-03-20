@@ -3,14 +3,13 @@ from statistics import mean
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models import Channel, Video
+from app.models import Channel, User, Video
 from app.schemas.analytics import OverviewResponse, TrendsResponse
 from app.schemas.video import TrendPoint, VideoSummaryResponse
-from app.services.sync_service import SyncService
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
-sync_service = SyncService()
 
 
 def _video_rows(videos: list[Video]) -> list[dict]:
@@ -34,8 +33,7 @@ def _video_rows(videos: list[Video]) -> list[dict]:
 
 
 @router.get("/overview", response_model=OverviewResponse)
-def overview(db: Session = Depends(get_db)) -> OverviewResponse:
-    user = sync_service.ensure_demo_dataset(db)
+def overview(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> OverviewResponse:
     channel = (
         db.query(Channel)
         .options(selectinload(Channel.videos).selectinload(Video.metrics))
@@ -64,8 +62,7 @@ def overview(db: Session = Depends(get_db)) -> OverviewResponse:
 
 
 @router.get("/trends", response_model=TrendsResponse)
-def trends(db: Session = Depends(get_db)) -> TrendsResponse:
-    user = sync_service.ensure_demo_dataset(db)
+def trends(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> TrendsResponse:
     channel = db.query(Channel).options(selectinload(Channel.metrics), selectinload(Channel.videos)).filter(Channel.user_id == user.id).first()
     series = [
         TrendPoint(
@@ -90,14 +87,24 @@ def trends(db: Session = Depends(get_db)) -> TrendsResponse:
 
 
 @router.get("/top-videos")
-def top_videos(db: Session = Depends(get_db)) -> list[dict]:
-    sync_service.ensure_demo_dataset(db)
-    videos = db.query(Video).options(selectinload(Video.metrics)).all()
+def top_videos(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[dict]:
+    videos = (
+        db.query(Video)
+        .join(Channel, Video.channel_id == Channel.id)
+        .options(selectinload(Video.metrics))
+        .filter(Channel.user_id == user.id)
+        .all()
+    )
     return sorted(_video_rows(videos), key=lambda item: item["total_views"], reverse=True)[:5]
 
 
 @router.get("/underperforming-videos")
-def underperforming_videos(db: Session = Depends(get_db)) -> list[dict]:
-    sync_service.ensure_demo_dataset(db)
-    videos = db.query(Video).options(selectinload(Video.metrics)).all()
+def underperforming_videos(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[dict]:
+    videos = (
+        db.query(Video)
+        .join(Channel, Video.channel_id == Channel.id)
+        .options(selectinload(Video.metrics))
+        .filter(Channel.user_id == user.id)
+        .all()
+    )
     return sorted(_video_rows(videos), key=lambda item: item["avg_ctr_proxy"])[:5]

@@ -3,13 +3,12 @@ from statistics import mean
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models import Recommendation, Video
+from app.models import Channel, Recommendation, User, Video
 from app.schemas.video import RecommendationResponse, VideoDetailResponse, VideoSummaryResponse
-from app.services.sync_service import SyncService
 
 router = APIRouter(prefix="/videos", tags=["videos"])
-sync_service = SyncService()
 
 
 def _serialize_video(video: Video) -> VideoSummaryResponse:
@@ -31,19 +30,25 @@ def _serialize_video(video: Video) -> VideoSummaryResponse:
 
 
 @router.get("", response_model=list[VideoSummaryResponse])
-def list_videos(db: Session = Depends(get_db)) -> list[VideoSummaryResponse]:
-    sync_service.ensure_demo_dataset(db)
-    videos = db.query(Video).options(selectinload(Video.metrics)).order_by(Video.published_at.desc()).all()
+def list_videos(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[VideoSummaryResponse]:
+    videos = (
+        db.query(Video)
+        .join(Channel, Video.channel_id == Channel.id)
+        .options(selectinload(Video.metrics))
+        .filter(Channel.user_id == user.id)
+        .order_by(Video.published_at.desc())
+        .all()
+    )
     return [_serialize_video(video) for video in videos]
 
 
 @router.get("/{video_id}", response_model=VideoDetailResponse)
-def get_video(video_id: int, db: Session = Depends(get_db)) -> VideoDetailResponse:
-    sync_service.ensure_demo_dataset(db)
+def get_video(video_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> VideoDetailResponse:
     video = (
         db.query(Video)
+        .join(Channel, Video.channel_id == Channel.id)
         .options(selectinload(Video.metrics), selectinload(Video.recommendations))
-        .filter(Video.id == video_id)
+        .filter(Video.id == video_id, Channel.user_id == user.id)
         .first()
     )
     if not video:
@@ -71,7 +76,16 @@ def get_video(video_id: int, db: Session = Depends(get_db)) -> VideoDetailRespon
 
 
 @router.get("/{video_id}/recommendations", response_model=list[RecommendationResponse])
-def get_video_recommendations(video_id: int, db: Session = Depends(get_db)) -> list[RecommendationResponse]:
-    sync_service.ensure_demo_dataset(db)
-    recommendations = db.query(Recommendation).filter(Recommendation.video_id == video_id).all()
+def get_video_recommendations(
+    video_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[RecommendationResponse]:
+    recommendations = (
+        db.query(Recommendation)
+        .join(Video, Recommendation.video_id == Video.id)
+        .join(Channel, Video.channel_id == Channel.id)
+        .filter(Recommendation.video_id == video_id, Channel.user_id == user.id)
+        .all()
+    )
     return [RecommendationResponse.model_validate(item) for item in recommendations]

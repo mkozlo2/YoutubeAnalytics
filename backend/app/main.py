@@ -8,8 +8,7 @@ from app.api.channel_routes import router as channel_router
 from app.api.debug_routes import router as debug_router
 from app.api.video_routes import router as video_router
 from app.core.config import get_settings
-from app.core.database import Base, SessionLocal, engine
-from app.services.sync_service import SyncService
+from app.core.database import Base, engine
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
@@ -32,8 +31,6 @@ app.include_router(debug_router)
 @app.on_event("startup")
 def on_startup() -> None:
     Base.metadata.create_all(bind=engine)
-    with SessionLocal() as db:
-        SyncService().ensure_demo_dataset(db)
 
 
 @app.get("/health")
